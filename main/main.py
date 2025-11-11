@@ -50,6 +50,15 @@ def choose_person_indices(model: YOLO) -> List[int]:
         idxs = [0]
     return idxs
 
+def enhance_frame(frame):
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+    cl = clahe.apply(l)
+    merged = cv2.merge((cl, a, b))
+    frame = cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
+    return frame
+
 def run_detection(video_path: str, weights: str, device: str, zones_json: Path, conf: float):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -63,11 +72,18 @@ def run_detection(video_path: str, weights: str, device: str, zones_json: Path, 
     alarm_delay = 3.0
     window_name = "Detection"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    frame_skip = 2
+    resize_scale = 0.7
 
     while True:
+        for _ in range(frame_skip - 1):
+            cap.grab()
         ok, frame = cap.read()
         if not ok:
             break
+        if resize_scale != 1.0:
+            frame = cv2.resize(frame, (0, 0), fx=resize_scale, fy=resize_scale)
+        frame = enhance_frame(frame)
         h, w = frame.shape[:2]
         zone_polys = [scale_norm_points_to_pixels(z, w, h) for z in zones_norm]
         overlay = frame.copy()
@@ -77,7 +93,7 @@ def run_detection(video_path: str, weights: str, device: str, zones_json: Path, 
                 cv2.fillPoly(overlay, [poly], (0, 255, 255))
         frame = cv2.addWeighted(overlay, 0.25, frame, 0.75, 0)
         results = model.predict(source=frame, stream=False, verbose=False,
-                                device=None if device == "auto" else device, conf=conf)
+                                device=None if device == "auto" else device, conf=conf, imgsz=960)
         res = results[0]
         inside_any = False
         if res.boxes is not None and len(res.boxes) > 0:
@@ -110,17 +126,15 @@ def run_detection(video_path: str, weights: str, device: str, zones_json: Path, 
         info = f"Device: {device} | FPS: {fps:.1f} | Zones: {len(zones_norm)} | Conf: {conf}"
         cv2.putText(frame, info, (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.imshow(window_name, frame)
-        key = cv2.waitKey(1) & 0xFF
-        if key in (27, ord("q")):
+        if cv2.waitKey(1) & 0xFF in (27, ord("q")):
             break
     cap.release()
     cv2.destroyWindow(window_name)
 
 if __name__ == "__main__":
     VIDEO = r"2.mp4"
-    WEIGHTS = r"best.pt"
+    WEIGHTS = r"2best.pt"
     ZONES = r"zones.json"
     DEVICE = "auto"
-    CONF = 0.25
-    
+    CONF = 0.1
     run_detection(VIDEO, WEIGHTS, DEVICE, Path(ZONES), CONF)
